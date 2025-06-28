@@ -10,7 +10,8 @@
     "Debuggers"
   ],
   "activationEvents": [
-    "onDebug"
+    "onDebug",
+    "onLanguage:rust"
   ],
   "main": "./out/extension.js",
   "scripts": {
@@ -62,11 +63,24 @@
           }
         }
       }
+    ],
+    "commands": [
+      {
+        "command": "ink-trace.runRustTestWithPythonInit",
+        "title": "Run Rust Test (with Python Init)"
+      }
+    ],
+    "languages": [
+      {
+        "id": "rust",
+        "extensions": [".rs"],
+        "aliases": ["Rust"]
+      }
     ]
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
-    "@types/node": "20.x",
+    "@types/node": "^20.19.2",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^7.11.0",
     "@typescript-eslint/parser": "^7.11.0",
