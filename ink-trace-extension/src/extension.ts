@@ -1,30 +1,34 @@
 import * as vscode from 'vscode';
-import { InkDebugSession } from './inkDebugSession';
+import { spawn } from 'child_process';
+import * as path from 'path';
 
 export function activate(context: vscode.ExtensionContext) {
+    const outputChannel = vscode.window.createOutputChannel('Python Server Logs');
+    const terminalName = 'Rust Tests';
+    let rustTestTerminal: vscode.Terminal | undefined;
+
     context.subscriptions.push(
-        vscode.debug.registerDebugAdapterDescriptorFactory(
-            'ink-trace',
-            new InkDebugAdapterDescriptorFactory()
-        ),
-        vscode.debug.registerDebugConfigurationProvider(
-            'ink-trace',
-            new InkDebugConfigurationProvider()
-        ),
-        vscode.commands.registerCommand(
-            'ink-trace.runRustTestWithPythonInit',
-            async (uri: vscode.Uri, range: vscode.Range) => {
-                vscode.window.showInformationMessage('Waiting for Python initialization...');
+        vscode.commands.registerCommand('ink-trace.runRustTestWithPythonInit', async (args: { fileUri: vscode.Uri, testName: string }) => {
+            outputChannel.show(true);
+            outputChannel.appendLine('Starting Python server initialization...');
 
-                // Тут можна викликати Python або інший процес
-                await new Promise(resolve => setTimeout(resolve, 2000)); // емулюємо затримку
+            try {
+                await initializePythonProcess(outputChannel);
+                outputChannel.appendLine(`Python is ready. Running test "${args.testName}"...\n`);
 
-                vscode.window.showInformationMessage('Python initialized! Running test...');
+                if (!rustTestTerminal) {
+                    rustTestTerminal = vscode.window.createTerminal(terminalName);
+                }
 
-                // Запускаємо стандартну rust-analyzer команду для запуску тесту
-                await vscode.commands.executeCommand('rust-analyzer.runSingle', uri, range);
+                rustTestTerminal.show();
+                rustTestTerminal.sendText(`cd "${path.dirname(args.fileUri.fsPath)}"`);
+                rustTestTerminal.sendText(`cargo test -- --nocapture ${args.testName}`);
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Failed to initialize Python: ${err.message}`);
+                outputChannel.appendLine(`Python error: ${err.message}`);
             }
-        ),
+        }),
+
         vscode.languages.registerCodeLensProvider(
             { language: 'rust' },
             new RustTestCodeLensProvider()
@@ -32,41 +36,63 @@ export function activate(context: vscode.ExtensionContext) {
     );
 }
 
-export function deactivate() {}
+async function initializePythonProcess(outputChannel: vscode.OutputChannel): Promise<void> {
+    return new Promise((resolve, reject) => {
+        outputChannel.appendLine('Connecting to Python (mock)...');
 
-class InkDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
-    resolveDebugConfiguration(
-        _folder: vscode.WorkspaceFolder | undefined,
-        config: vscode.DebugConfiguration
-    ): vscode.ProviderResult<vscode.DebugConfiguration> {
-        if (!config.program) {
-            config.program = '${file}';
-        }
-        return config;
-    }
-}
+        setTimeout(() => {
+            outputChannel.appendLine('SERVER_READY (mock)');
+            resolve();
+        }, 3000);
 
-class InkDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
-    createDebugAdapterDescriptor(session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
-        return new vscode.DebugAdapterInlineImplementation(new InkDebugSession());
-    }
+        /*
+        // Uncomment this block to run a real Python script and wait for "SERVER_READY"
+        const pythonPath = 'python'; // or 'python3'
+        const scriptPath = path.join(__dirname, 'scripts/server.py');
+
+        const process = spawn(pythonPath, [scriptPath]);
+
+        process.stdout.on('data', (data) => {
+            const output = data.toString();
+            outputChannel.append(output);
+            if (output.includes('SERVER_READY')) {
+                resolve();
+            }
+        });
+
+        process.stderr.on('data', (data) => {
+            outputChannel.append(data.toString());
+        });
+
+        process.on('error', (err) => {
+            reject(err);
+        });
+
+        process.on('exit', (code) => {
+            if (code !== 0) {
+                reject(new Error(`Python exited with code ${code}`));
+            }
+        });
+        */
+    });
 }
 
 class RustTestCodeLensProvider implements vscode.CodeLensProvider {
     provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
         const codeLenses: vscode.CodeLens[] = [];
-        const regex = /#\[test\]/g;
+        const regex = /#\[test\]\s*?\n\s*?fn\s+([a-zA-Z0-9_]+)\s*?\(/g;
         const text = document.getText();
         let match: RegExpExecArray | null;
 
         while ((match = regex.exec(text))) {
-            const matchPos = document.positionAt(match.index);
-            const nextLine = new vscode.Position(matchPos.line + 1, 0);
-            const range = new vscode.Range(nextLine, nextLine); // під функцією
+            const testName = match[1];
+            const position = document.positionAt(match.index);
+            const range = new vscode.Range(position, position);
+
             codeLenses.push(new vscode.CodeLens(range, {
-                title: 'Run with Python Init',
+                title: '▶ Run test',
                 command: 'ink-trace.runRustTestWithPythonInit',
-                arguments: [document.uri, range]
+                arguments: [{ fileUri: document.uri, testName }]
             }));
         }
 
