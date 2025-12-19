@@ -67,7 +67,7 @@
             "type": "ink-trace",
             "request": "launch",
             "name": "Ink Trace: Launch",
-            "program": "${fileDirname}",
+            "program": "${workspaceFolder}",
             "stopOnEntry": true,
             "args": []
           }
@@ -80,7 +80,7 @@
               "type": "ink-trace",
               "request": "launch",
               "name": "Ink Trace: Launch",
-              "program": "${fileDirname}",
+              "program": "${workspaceFolder}",
               "stopOnEntry": true
             }
           }

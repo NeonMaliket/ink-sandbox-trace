@@ -2,4 +2,6 @@
 
 /out/
 .package-lock.json
+*.lock
+package-lock.json
 
