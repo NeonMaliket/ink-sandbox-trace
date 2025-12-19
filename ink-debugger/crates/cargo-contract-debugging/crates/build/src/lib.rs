@@ -803,8 +803,9 @@ fn local_build(
         config.set_optimize(true);
     }
     let orig = fs::read(&crate_metadata.original_code)?;
-
-    let linked = match polkavm_linker::program_from_elf(config, orig.as_ref()) {
+    //TODO: updated from match polkavm_linker::program_from_elf(config, orig.as_ref())
+    //TODO: updated to   match polkavm_linker::program_from_elf(config, polkavm_linker::TargetInstructionSet::Latest, orig.as_ref())
+    let linked = match polkavm_linker::program_from_elf(config, polkavm_linker::TargetInstructionSet::Latest, orig.as_ref()) {
         Ok(linked) => linked,
         Err(err) => {
             let re =

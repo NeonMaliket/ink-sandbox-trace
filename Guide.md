@@ -16,7 +16,9 @@ The server will stay running in the background and respond to incoming requests.
 
 ## 2. Launch the Extension
 1. Open VSCode and **open the `ink-trace-extension/` folder**.
-2. Press `F5` or run **“Launch Extension”** from the Run menu. This starts the extension and opens a **new VSCode window** (Extension Host).
+2. Run command ```npm install```
+3. Run command ```npm run compile```
+4. Press `F5` or run **“Launch Extension”** from the Run menu. This starts the extension and opens a **new VSCode window** (Extension Host).
 
 
 ## 3. Open the Sample Workspace
