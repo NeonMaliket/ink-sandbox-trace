@@ -18,7 +18,7 @@ use dap::types::{
     Breakpoint, Capabilities, Scope, Source, StackFrame, StoppedEventReason, Thread, Variable,
 };
 
-use crate::log::dap_log;
+use crate::log::send_log;
 use crate::state::DapState;
 use crate::types::DynResult;
 use crate::utils::extract_port_from_args;
@@ -31,9 +31,9 @@ pub(crate) fn handle(
     server: &mut Server<Stdin, Stdout>,
     state: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, "--- New DAP Request Received ---");
-    dap_log(server, format!("DAP STATE: {state:?}"));
-    dap_log(server, "----------------------------------");
+    send_log("--- New DAP Request Received ---");
+    send_log(format!("DAP STATE: {state:?}"));
+    send_log("----------------------------------");
     match &req.command {
         Command::Initialize(args) => handle_initialize(req.clone(), args, server),
         Command::Launch(args) => handle_launch(req.clone(), args, server, state),
@@ -63,10 +63,7 @@ fn handle_initialize(
     args: &InitializeArguments,
     server: &mut Server<Stdin, Stdout>,
 ) -> DynResult<()> {
-    dap_log(server, format!("Initialize: {args:?}"));
-
-    // Минимальные capabilities чтобы VS Code начал слать стандартные запросы.
-    // Если у тебя в crate `dap` другие поля/имена — замени по аналогии.
+    send_log(format!("Initialize: {args:?}"));
     let caps = Capabilities {
         supports_configuration_done_request: Some(true),
         supports_set_variable: Some(false),
@@ -86,7 +83,7 @@ fn handle_initialize(
 }
 
 fn handle_configuration_done(req: Request, server: &mut Server<Stdin, Stdout>) -> DynResult<()> {
-    dap_log(server, "ConfigurationDone");
+    send_log("ConfigurationDone");
     server.respond(req.success(ResponseBody::ConfigurationDone))?;
     Ok(())
 }
@@ -95,11 +92,16 @@ fn handle_launch(
     req: Request,
     args: &LaunchRequestArguments,
     server: &mut Server<Stdin, Stdout>,
-    _st: &mut DapState,
+    st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, format!("Launch: {args:?}"));
+    send_log(format!("Launch: {args:?}"));
     let port = extract_port_from_args(args);
-    dap_log(server, format!("Running on port: {port:?}"));
+    st.port = port;
+    match st.run_server() {
+        Ok(()) => send_log("REST server spawned"),
+        Err(e) => send_log(format!("REST server bind/run error: {e}")),
+    }
+    send_log(format!("Running on port: {port:?}"));
 
     server.respond(req.success(ResponseBody::Launch))?;
     Ok(())
@@ -110,7 +112,7 @@ fn handle_restart(
     args: &RestartArguments,
     server: &mut Server<Stdin, Stdout>,
 ) -> DynResult<()> {
-    dap_log(server, format!("Restart: {args:?}"));
+    send_log(format!("Restart: {args:?}"));
     server.respond(req.success(ResponseBody::Restart))?;
     Ok(())
 }
@@ -120,7 +122,7 @@ fn handle_attach(
     args: &AttachRequestArguments,
     server: &mut Server<Stdin, Stdout>,
 ) -> DynResult<()> {
-    dap_log(server, format!("Attach: {args:?}"));
+    send_log(format!("Attach: {args:?}"));
     server.respond(req.success(ResponseBody::Attach))?;
     Ok(())
 }
@@ -131,12 +133,10 @@ fn handle_set_breakpoints(
     server: &mut Server<Stdin, Stdout>,
     st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, format!("SetBreakpoints: {args:?}"));
+    send_log(format!("SetBreakpoints: {args:?}"));
 
-    // Запомнить source чтобы потом отдать stackTrace с тем же source/path
     st.current_source = Some(args.source.clone());
 
-    // Сохранить линии брейков по path
     if let Some(path) = args.source.path.clone() {
         let mut lines = Vec::new();
         if let Some(source_breakpoints) = &args.breakpoints {
@@ -163,11 +163,10 @@ fn handle_set_breakpoints(
                 offset: None,
             });
 
-            dap_log(server, format!("Set breakpoint at line {}", src_bp.line));
+            send_log(format!("Set breakpoint at line {}", src_bp.line));
         }
     }
 
-    // ВАЖНО: на SetBreakpoints должен быть РОВНО ОДИН ответ SetBreakpointsResponse
     server.respond(
         req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
             breakpoints,
@@ -181,7 +180,7 @@ fn handle_set_exception_breakpoints(
     args: &SetExceptionBreakpointsArguments,
     server: &mut Server<Stdin, Stdout>,
 ) -> DynResult<()> {
-    dap_log(server, format!("SetExceptionBreakpoints: {args:?}"));
+    send_log(format!("SetExceptionBreakpoints: {args:?}"));
 
     server.respond(req.success(ResponseBody::SetExceptionBreakpoints(
         SetExceptionBreakpointsResponse { breakpoints: None },
@@ -194,7 +193,7 @@ fn handle_threads(
     server: &mut Server<Stdin, Stdout>,
     st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, "Threads request received");
+    send_log("Threads request received");
 
     let threads = vec![Thread {
         id: st.main_thread_id,
@@ -211,14 +210,12 @@ fn handle_pause(
     server: &mut Server<Stdin, Stdout>,
     st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, format!("Pause: {args:?}"));
+    send_log(format!("Pause: {args:?}"));
 
     server.respond(req.success(ResponseBody::Pause))?;
 
-    // выбрать линию, куда “остановились” (для демо — первый брейкпоинт или 1)
     st.pick_stop_location();
 
-    // ВАЖНО: после PauseResponse нужно послать Stopped event
     server.send_event(Event::Stopped(dap::events::StoppedEventBody {
         reason: StoppedEventReason::Pause,
         description: Some("Paused".to_string()),
@@ -238,7 +235,7 @@ fn handle_continue(
     server: &mut Server<Stdin, Stdout>,
     st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, format!("Continue: {args:?}"));
+    send_log(format!("Continue: {args:?}"));
 
     server.respond(req.success(ResponseBody::Continue(ContinueResponse {
         all_threads_continued: Some(true),
@@ -258,7 +255,7 @@ fn handle_stack_trace(
     server: &mut Server<Stdin, Stdout>,
     st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, format!("StackTrace: {args:?}"));
+    send_log(format!("StackTrace: {args:?}"));
 
     let source = st.current_source.clone().unwrap_or(Source {
         name: Some("unknown".to_string()),
@@ -299,7 +296,7 @@ fn handle_scopes(
     server: &mut Server<Stdin, Stdout>,
     st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, format!("Scopes: {args:?}"));
+    send_log(format!("Scopes: {args:?}"));
 
     let scopes = vec![Scope {
         name: "Locals".to_string(),
@@ -325,7 +322,7 @@ fn handle_variables(
     server: &mut Server<Stdin, Stdout>,
     _st: &mut DapState,
 ) -> DynResult<()> {
-    dap_log(server, format!("Variables: {args:?}"));
+    send_log(format!("Variables: {args:?}"));
 
     let variables = vec![Variable {
         name: "demo".to_string(),
@@ -348,13 +345,13 @@ fn handle_disconnect(
     args: &DisconnectArguments,
     server: &mut Server<Stdin, Stdout>,
 ) -> DynResult<()> {
-    dap_log(server, format!("Disconnect: {args:?}"));
+    send_log(format!("Disconnect: {args:?}"));
     server.respond(req.success(ResponseBody::Disconnect))?;
     Ok(())
 }
 
 fn handle_unsupported(req: Request, server: &mut Server<Stdin, Stdout>) -> DynResult<()> {
-    dap_log(server, format!("Unsupported command: {:?}", req.command));
+    send_log(format!("Unsupported command: {:?}", req.command));
 
     server.send(Sendable::Response(Response {
         request_seq: req.seq,

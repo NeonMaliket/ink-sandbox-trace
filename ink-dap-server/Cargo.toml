@@ -13,3 +13,6 @@ serde_json = "1.0.145"
 
 anyhow = "1"
 polkavm = "0.30"
+actix-web = "4.12.1"
+tokio = "1.48.0"
+serde = "1.0.228"

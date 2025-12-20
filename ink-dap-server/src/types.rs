@@ -1,1 +1,3 @@
-pub(crate) type DynResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+use std::{error::Error, result::Result};
+
+pub(crate) type DynResult<T> = Result<T, Box<dyn Error>>;
