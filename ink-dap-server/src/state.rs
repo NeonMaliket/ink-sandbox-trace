@@ -1,14 +1,17 @@
-use std::{collections::HashMap, net::TcpListener};
+use std::{collections::HashMap, net::TcpListener, sync::Arc};
 
-use actix_web::{App, HttpServer};
+use actix_web::{web, App, HttpServer};
 use dap::types::Source;
 
-use crate::{service::log, types::DynResult};
+use crate::{
+    service::log,
+    types::{DapServer, DynResult},
+};
 
 const DEFAULT_PORT: u16 = 9229;
 const DEFAULT_ADDRESS: &str = "127.0.0.1";
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct DapState {
     pub(crate) main_thread_id: i64,
     pub(crate) current_source: Option<Source>,
@@ -46,7 +49,7 @@ impl DapState {
         self.stopped_column = 1;
     }
 
-    pub(crate) fn run_server(&self) -> DynResult<()> {
+    pub(crate) fn run_server(&self, server: DapServer) -> DynResult<()> {
         let port = self.port.unwrap_or(DEFAULT_PORT);
 
         let listener = TcpListener::bind((DEFAULT_ADDRESS, port))?;
@@ -54,10 +57,14 @@ impl DapState {
         std::thread::spawn(move || {
             let sys = actix_web::rt::System::new();
             let _ = sys.block_on(async move {
-                HttpServer::new(move || App::new().service(log))
-                    .listen(listener)?
-                    .run()
-                    .await
+                HttpServer::new(move || {
+                    App::new()
+                        .app_data(web::Data::new(Arc::clone(&server)))
+                        .service(log)
+                })
+                .listen(listener)?
+                .run()
+                .await
             });
         });
 

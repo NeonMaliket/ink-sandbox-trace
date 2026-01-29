@@ -1,7 +1,7 @@
 use actix_web::{post, web, HttpResponse, Responder};
 use serde::Deserialize;
 
-use crate::log::send_log;
+use crate::{log::dap_log, types::DapServer};
 
 #[derive(Deserialize, Debug)]
 struct LogRequest {
@@ -9,8 +9,11 @@ struct LogRequest {
 }
 
 #[post("/log")]
-pub(crate) async fn log(log_req: web::Json<LogRequest>) -> impl Responder {
+pub(crate) async fn log(
+    log_req: web::Json<LogRequest>,
+    server: web::Data<DapServer>,
+) -> impl Responder {
     let req = log_req.into_inner();
-    send_log(req.message);
+    dap_log(server.get_ref().clone(), req.message);
     HttpResponse::Ok()
 }
