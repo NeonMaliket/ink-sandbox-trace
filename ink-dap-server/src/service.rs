@@ -19,7 +19,6 @@ struct LogRequest {
 pub(crate) async fn log(log_req: web::Json<LogRequest>) -> impl Responder {
     let req = log_req.into_inner();
     send_log(req.message);
-    send_log("NEW VERSION");
     HttpResponse::Ok()
 }
 
