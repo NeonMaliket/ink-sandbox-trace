@@ -298,10 +298,6 @@ where
 {
 	pub fn call(mut self) -> ExecResult {
 		let sandbox = SandboxRpc::default();
-		if let  Err(e) = sandbox.serve_async() {
-			log::error!("failed to start sandbox rpc server: {:?}", e);
-			panic!("failed to start sandbox rpc server");
-		}
 		let exec_result = loop {
 			let interrupt = self.instance.run();
 			sandbox.step(&self.instance);
