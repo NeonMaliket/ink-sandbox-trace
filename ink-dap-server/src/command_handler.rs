@@ -1,5 +1,3 @@
-use std::io::{Stdin, Stdout};
-
 use dap::base_message::Sendable;
 use dap::events::Event;
 use dap::requests::{
@@ -13,14 +11,13 @@ use dap::responses::{
     SetBreakpointsResponse, SetExceptionBreakpointsResponse, StackTraceResponse, ThreadsResponse,
     VariablesResponse,
 };
-use dap::server::Server;
 use dap::types::{
     Breakpoint, Capabilities, Scope, Source, StackFrame, StoppedEventReason, Thread, Variable,
 };
 
 use crate::log::send_log;
 use crate::state::DapState;
-use crate::types::DynResult;
+use crate::types::{DapServerOut, DynResult};
 use crate::utils::extract_port_from_args;
 
 // --------------------
@@ -28,7 +25,7 @@ use crate::utils::extract_port_from_args;
 // --------------------
 pub(crate) fn handle(
     req: Request,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     state: &mut DapState,
 ) -> DynResult<()> {
     send_log("--- New DAP Request Received ---");
@@ -61,7 +58,7 @@ pub(crate) fn handle(
 fn handle_initialize(
     req: Request,
     args: &InitializeArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("Initialize: {args:?}"));
     let caps = Capabilities {
@@ -82,7 +79,7 @@ fn handle_initialize(
     Ok(())
 }
 
-fn handle_configuration_done(req: Request, server: &mut Server<Stdin, Stdout>) -> DynResult<()> {
+fn handle_configuration_done(req: Request, server: &mut DapServerOut) -> DynResult<()> {
     send_log("ConfigurationDone");
     server.respond(req.success(ResponseBody::ConfigurationDone))?;
     Ok(())
@@ -91,7 +88,7 @@ fn handle_configuration_done(req: Request, server: &mut Server<Stdin, Stdout>) -
 fn handle_launch(
     req: Request,
     args: &LaunchRequestArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Launch: {args:?}"));
@@ -110,7 +107,7 @@ fn handle_launch(
 fn handle_restart(
     req: Request,
     args: &RestartArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("Restart: {args:?}"));
     server.respond(req.success(ResponseBody::Restart))?;
@@ -120,7 +117,7 @@ fn handle_restart(
 fn handle_attach(
     req: Request,
     args: &AttachRequestArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("Attach: {args:?}"));
     server.respond(req.success(ResponseBody::Attach))?;
@@ -130,7 +127,7 @@ fn handle_attach(
 fn handle_set_breakpoints(
     req: Request,
     args: &SetBreakpointsArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("SetBreakpoints: {args:?}"));
@@ -178,7 +175,7 @@ fn handle_set_breakpoints(
 fn handle_set_exception_breakpoints(
     req: Request,
     args: &SetExceptionBreakpointsArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("SetExceptionBreakpoints: {args:?}"));
 
@@ -188,11 +185,7 @@ fn handle_set_exception_breakpoints(
     Ok(())
 }
 
-fn handle_threads(
-    req: Request,
-    server: &mut Server<Stdin, Stdout>,
-    st: &mut DapState,
-) -> DynResult<()> {
+fn handle_threads(req: Request, server: &mut DapServerOut, st: &mut DapState) -> DynResult<()> {
     send_log("Threads request received");
 
     let threads = vec![Thread {
@@ -207,7 +200,7 @@ fn handle_threads(
 fn handle_pause(
     req: Request,
     args: &PauseArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Pause: {args:?}"));
@@ -232,7 +225,7 @@ fn handle_pause(
 fn handle_continue(
     req: Request,
     args: &ContinueArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Continue: {args:?}"));
@@ -252,7 +245,7 @@ fn handle_continue(
 fn handle_stack_trace(
     req: Request,
     args: &StackTraceArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("StackTrace: {args:?}"));
@@ -293,7 +286,7 @@ fn handle_stack_trace(
 fn handle_scopes(
     req: Request,
     args: &ScopesArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Scopes: {args:?}"));
@@ -319,7 +312,7 @@ fn handle_scopes(
 fn handle_variables(
     req: Request,
     args: &VariablesArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
     _st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Variables: {args:?}"));
@@ -343,14 +336,14 @@ fn handle_variables(
 fn handle_disconnect(
     req: Request,
     args: &DisconnectArguments,
-    server: &mut Server<Stdin, Stdout>,
+    server: &mut DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("Disconnect: {args:?}"));
     server.respond(req.success(ResponseBody::Disconnect))?;
     Ok(())
 }
 
-fn handle_unsupported(req: Request, server: &mut Server<Stdin, Stdout>) -> DynResult<()> {
+fn handle_unsupported(req: Request, server: &mut DapServerOut) -> DynResult<()> {
     send_log(format!("Unsupported command: {:?}", req.command));
 
     server.send(Sendable::Response(Response {

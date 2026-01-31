@@ -4,38 +4,64 @@ mod service;
 mod state;
 mod types;
 mod utils;
-use crate::log::{dap_log, send_log};
+
+use crate::command_handler::handle;
+use crate::log::{dap_log, init_log_channel, send_log};
 use crate::state::DapState;
 use crate::types::DynResult;
-use crate::{command_handler::handle, log::init_log_channel};
 use dap::prelude::*;
 use std::io::{BufReader, BufWriter};
 
 fn main() -> DynResult<()> {
+    let mut rx_logs = init_log_channel();
+
+    let (req_tx, req_rx) = crossbeam_channel::unbounded::<Request>();
+
+    std::thread::spawn(move || {
+        let input = BufReader::new(std::io::stdin());
+        let output = BufWriter::new(std::io::sink());
+        let mut server_in = Server::new(input, output);
+
+        loop {
+            match server_in.poll_request() {
+                Ok(Some(req)) => {
+                    if req_tx.send(req).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("[DAP] read error: {e}");
+                    break;
+                }
+            }
+        }
+    });
+
+    let input = BufReader::new(std::io::empty());
     let output = BufWriter::new(std::io::stdout());
-    let input = BufReader::new(std::io::stdin());
+    let mut server_out = Server::new(input, output);
     let mut state = DapState::new();
-    let mut server = Server::new(input, output);
-    let mut rx = init_log_channel();
 
     loop {
-        while let Ok(msg) = rx.try_recv() {
-            dap_log(&mut server, msg);
+        while let Ok(msg) = rx_logs.try_recv() {
+            dap_log(&mut server_out, msg);
         }
 
-        let req = match server.poll_request()? {
-            Some(req) => req,
-            None => {
-                eprintln!("No request received, exiting.");
+        match req_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(req) => {
+                if let Err(e) = handle(req, &mut server_out, &mut state) {
+                    eprintln!("[DAP] Error processing command: {e}");
+                    send_log(format!("Error: {e}"));
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                eprintln!("[DAP] request channel disconnected, exiting.");
                 break;
             }
-        };
-
-        let result: DynResult<()> = handle(req, &mut server, &mut state);
-
-        if let Err(e) = result {
-            eprintln!("[DAP] Error processing command: {}", e);
-            send_log(format!("Error: {}", e));
         }
     }
 
