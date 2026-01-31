@@ -11,6 +11,7 @@ use crate::state::DapState;
 use crate::types::DynResult;
 use dap::prelude::*;
 use std::io::{BufReader, BufWriter};
+use std::sync::{Arc, Mutex};
 
 fn main() -> DynResult<()> {
     let mut rx_logs = init_log_channel();
@@ -42,17 +43,17 @@ fn main() -> DynResult<()> {
 
     let input = BufReader::new(std::io::empty());
     let output = BufWriter::new(std::io::stdout());
-    let mut server_out = Server::new(input, output);
+    let server_out = Arc::new(Mutex::new(Server::new(input, output)));
     let mut state = DapState::new();
 
     loop {
         while let Ok(msg) = rx_logs.try_recv() {
-            dap_log(&mut server_out, msg);
+            dap_log(Arc::clone(&server_out), msg);
         }
 
         match req_rx.recv_timeout(std::time::Duration::from_millis(50)) {
             Ok(req) => {
-                if let Err(e) = handle(req, &mut server_out, &mut state) {
+                if let Err(e) = handle(req, Arc::clone(&server_out), &mut state) {
                     eprintln!("[DAP] Error processing command: {e}");
                     send_log(format!("Error: {e}"));
                 }

@@ -2,10 +2,11 @@ use std::sync::OnceLock;
 
 use dap::{
     events::{Event, OutputEventBody},
-    server::Server,
     types::OutputEventCategory,
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+use crate::{command_handler::server_send_event, types::DapServerOut};
 
 static LOG_TX: OnceLock<UnboundedSender<String>> = OnceLock::new();
 
@@ -21,13 +22,13 @@ pub(crate) fn send_log(msg: impl Into<String>) {
     }
 }
 
-pub(crate) fn dap_log<S: std::io::Read, W: std::io::Write>(
-    server: &mut Server<S, W>,
-    msg: impl AsRef<str>,
-) {
-    let _ = server.send_event(Event::Output(OutputEventBody {
-        category: Some(OutputEventCategory::Console),
-        output: format!("{}\n", msg.as_ref()),
-        ..Default::default()
-    }));
+pub(crate) fn dap_log(server: DapServerOut, msg: impl AsRef<str>) {
+    let _ = server_send_event(
+        server,
+        Event::Output(OutputEventBody {
+            category: Some(OutputEventCategory::Console),
+            output: format!("{}\n", msg.as_ref()),
+            ..Default::default()
+        }),
+    );
 }

@@ -1,3 +1,6 @@
+use std::error::Error;
+use std::sync::Arc;
+
 use dap::base_message::Sendable;
 use dap::events::Event;
 use dap::requests::{
@@ -23,11 +26,7 @@ use crate::utils::extract_port_from_args;
 // --------------------
 // ROUTER
 // --------------------
-pub(crate) fn handle(
-    req: Request,
-    server: &mut DapServerOut,
-    state: &mut DapState,
-) -> DynResult<()> {
+pub(crate) fn handle(req: Request, server: DapServerOut, state: &mut DapState) -> DynResult<()> {
     send_log("--- New DAP Request Received ---");
     send_log(format!("DAP STATE: {state:?}"));
     send_log("----------------------------------");
@@ -58,7 +57,7 @@ pub(crate) fn handle(
 fn handle_initialize(
     req: Request,
     args: &InitializeArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("Initialize: {args:?}"));
     let caps = Capabilities {
@@ -74,60 +73,55 @@ fn handle_initialize(
         ..Default::default()
     };
 
-    server.respond(req.success(ResponseBody::Initialize(caps)))?;
-    server.send_event(Event::Initialized)?;
+    server_respond(server.clone(), req.success(ResponseBody::Initialize(caps)))?;
+    server_send_event(server, Event::Initialized)?;
     Ok(())
 }
 
-fn handle_configuration_done(req: Request, server: &mut DapServerOut) -> DynResult<()> {
+fn handle_configuration_done(req: Request, server: DapServerOut) -> DynResult<()> {
     send_log("ConfigurationDone");
-    server.respond(req.success(ResponseBody::ConfigurationDone))?;
+    server_respond(server, req.success(ResponseBody::ConfigurationDone))?;
     Ok(())
 }
 
 fn handle_launch(
     req: Request,
     args: &LaunchRequestArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Launch: {args:?}"));
     let port = extract_port_from_args(args);
     st.port = port;
-    match st.run_server() {
+    match st.run_server(Arc::clone(&server)) {
         Ok(()) => send_log("REST server spawned"),
         Err(e) => send_log(format!("REST server bind/run error: {e}")),
     }
     send_log(format!("Running on port: {port:?}"));
-
-    server.respond(req.success(ResponseBody::Launch))?;
+    server_respond(server, req.success(ResponseBody::Launch))?;
     Ok(())
 }
 
-fn handle_restart(
-    req: Request,
-    args: &RestartArguments,
-    server: &mut DapServerOut,
-) -> DynResult<()> {
+fn handle_restart(req: Request, args: &RestartArguments, server: DapServerOut) -> DynResult<()> {
     send_log(format!("Restart: {args:?}"));
-    server.respond(req.success(ResponseBody::Restart))?;
+    server_respond(server, req.success(ResponseBody::Restart))?;
     Ok(())
 }
 
 fn handle_attach(
     req: Request,
     args: &AttachRequestArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("Attach: {args:?}"));
-    server.respond(req.success(ResponseBody::Attach))?;
+    server_respond(server, req.success(ResponseBody::Attach))?;
     Ok(())
 }
 
 fn handle_set_breakpoints(
     req: Request,
     args: &SetBreakpointsArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("SetBreakpoints: {args:?}"));
@@ -164,7 +158,8 @@ fn handle_set_breakpoints(
         }
     }
 
-    server.respond(
+    server_respond(
+        server,
         req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
             breakpoints,
         })),
@@ -175,17 +170,20 @@ fn handle_set_breakpoints(
 fn handle_set_exception_breakpoints(
     req: Request,
     args: &SetExceptionBreakpointsArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("SetExceptionBreakpoints: {args:?}"));
 
-    server.respond(req.success(ResponseBody::SetExceptionBreakpoints(
-        SetExceptionBreakpointsResponse { breakpoints: None },
-    )))?;
+    server_respond(
+        server,
+        req.success(ResponseBody::SetExceptionBreakpoints(
+            SetExceptionBreakpointsResponse { breakpoints: None },
+        )),
+    )?;
     Ok(())
 }
 
-fn handle_threads(req: Request, server: &mut DapServerOut, st: &mut DapState) -> DynResult<()> {
+fn handle_threads(req: Request, server: DapServerOut, st: &mut DapState) -> DynResult<()> {
     send_log("Threads request received");
 
     let threads = vec![Thread {
@@ -193,31 +191,37 @@ fn handle_threads(req: Request, server: &mut DapServerOut, st: &mut DapState) ->
         name: "Main Thread".to_string(),
     }];
 
-    server.respond(req.success(ResponseBody::Threads(ThreadsResponse { threads })))?;
+    server_respond(
+        server,
+        req.success(ResponseBody::Threads(ThreadsResponse { threads })),
+    )?;
     Ok(())
 }
 
 fn handle_pause(
     req: Request,
     args: &PauseArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Pause: {args:?}"));
 
-    server.respond(req.success(ResponseBody::Pause))?;
+    server_respond(server.clone(), req.success(ResponseBody::Pause))?;
 
     st.pick_stop_location();
 
-    server.send_event(Event::Stopped(dap::events::StoppedEventBody {
-        reason: StoppedEventReason::Pause,
-        description: Some("Paused".to_string()),
-        thread_id: Some(st.main_thread_id),
-        preserve_focus_hint: Some(false),
-        text: None,
-        all_threads_stopped: Some(true),
-        hit_breakpoint_ids: None,
-    }))?;
+    server_send_event(
+        server,
+        Event::Stopped(dap::events::StoppedEventBody {
+            reason: StoppedEventReason::Pause,
+            description: Some("Paused".to_string()),
+            thread_id: Some(st.main_thread_id),
+            preserve_focus_hint: Some(false),
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }),
+    )?;
 
     Ok(())
 }
@@ -225,19 +229,25 @@ fn handle_pause(
 fn handle_continue(
     req: Request,
     args: &ContinueArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Continue: {args:?}"));
 
-    server.respond(req.success(ResponseBody::Continue(ContinueResponse {
-        all_threads_continued: Some(true),
-    })))?;
+    server_respond(
+        server.clone(),
+        req.success(ResponseBody::Continue(ContinueResponse {
+            all_threads_continued: Some(true),
+        })),
+    )?;
 
-    server.send_event(Event::Continued(dap::events::ContinuedEventBody {
-        thread_id: st.main_thread_id,
-        all_threads_continued: Some(true),
-    }))?;
+    server_send_event(
+        server,
+        Event::Continued(dap::events::ContinuedEventBody {
+            thread_id: st.main_thread_id,
+            all_threads_continued: Some(true),
+        }),
+    )?;
 
     Ok(())
 }
@@ -245,7 +255,7 @@ fn handle_continue(
 fn handle_stack_trace(
     req: Request,
     args: &StackTraceArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("StackTrace: {args:?}"));
@@ -275,10 +285,13 @@ fn handle_stack_trace(
         presentation_hint: None,
     }];
 
-    server.respond(req.success(ResponseBody::StackTrace(StackTraceResponse {
-        stack_frames: frames,
-        total_frames: Some(1),
-    })))?;
+    server_respond(
+        server,
+        req.success(ResponseBody::StackTrace(StackTraceResponse {
+            stack_frames: frames,
+            total_frames: Some(1),
+        })),
+    )?;
 
     Ok(())
 }
@@ -286,7 +299,7 @@ fn handle_stack_trace(
 fn handle_scopes(
     req: Request,
     args: &ScopesArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
     st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Scopes: {args:?}"));
@@ -305,14 +318,17 @@ fn handle_scopes(
         end_column: None,
     }];
 
-    server.respond(req.success(ResponseBody::Scopes(ScopesResponse { scopes })))?;
+    server_respond(
+        server,
+        req.success(ResponseBody::Scopes(ScopesResponse { scopes })),
+    )?;
     Ok(())
 }
 
 fn handle_variables(
     req: Request,
     args: &VariablesArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
     _st: &mut DapState,
 ) -> DynResult<()> {
     send_log(format!("Variables: {args:?}"));
@@ -329,32 +345,64 @@ fn handle_variables(
         memory_reference: None,
     }];
 
-    server.respond(req.success(ResponseBody::Variables(VariablesResponse { variables })))?;
+    server_respond(
+        server,
+        req.success(ResponseBody::Variables(VariablesResponse { variables })),
+    )?;
     Ok(())
 }
 
 fn handle_disconnect(
     req: Request,
     args: &DisconnectArguments,
-    server: &mut DapServerOut,
+    server: DapServerOut,
 ) -> DynResult<()> {
     send_log(format!("Disconnect: {args:?}"));
-    server.respond(req.success(ResponseBody::Disconnect))?;
+    server_respond(server, req.success(ResponseBody::Disconnect))?;
     Ok(())
 }
 
-fn handle_unsupported(req: Request, server: &mut DapServerOut) -> DynResult<()> {
+fn handle_unsupported(req: Request, server: DapServerOut) -> DynResult<()> {
     send_log(format!("Unsupported command: {:?}", req.command));
 
-    server.send(Sendable::Response(Response {
-        request_seq: req.seq,
-        success: false,
-        message: Some(ResponseMessage::Error(format!(
-            "Unsupported command: {:?}",
-            req.command
-        ))),
-        body: None,
-        error: None,
-    }))?;
+    server_send(
+        server,
+        Sendable::Response(Response {
+            request_seq: req.seq,
+            success: false,
+            message: Some(ResponseMessage::Error(format!(
+                "Unsupported command: {:?}",
+                req.command
+            ))),
+            body: None,
+            error: None,
+        }),
+    )?;
+    Ok(())
+}
+
+fn map_server_lock_err(
+    _: std::sync::PoisonError<
+        std::sync::MutexGuard<'_, dap::prelude::Server<std::io::Empty, std::io::Stdout>>,
+    >,
+) -> &str {
+    "Failed to lock DAP server mutex"
+}
+
+pub(crate) fn server_respond(server: DapServerOut, resp: Response) -> Result<(), Box<dyn Error>> {
+    let mut server = server.lock().map_err(map_server_lock_err)?;
+    server.respond(resp)?;
+    Ok(())
+}
+
+pub(crate) fn server_send_event(server: DapServerOut, event: Event) -> Result<(), Box<dyn Error>> {
+    let mut server = server.lock().map_err(map_server_lock_err)?;
+    server.send_event(event)?;
+    Ok(())
+}
+
+fn server_send(server: DapServerOut, msg: Sendable) -> Result<(), Box<dyn Error>> {
+    let mut server = server.lock().map_err(map_server_lock_err)?;
+    server.send(msg)?;
     Ok(())
 }
