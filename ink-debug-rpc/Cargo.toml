@@ -16,3 +16,4 @@ polkavm = { version = "0.21.0", features = ["generic-sandbox"] }
 gimli = "0.32.0"
 object = "0.37.2"
 addr2line = "0.25.0"
+reqwest = "0.13.1"

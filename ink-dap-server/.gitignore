@@ -47,3 +47,6 @@ env/
 .Trashes
 ehthumbs.db
 Thumbs.db
+/target/
+*.lock
+.zed/

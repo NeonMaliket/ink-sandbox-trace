@@ -1,24 +1,16 @@
-use crate::{
-    domain::{JsonRpcError, JsonRpcRequest},
-    methods,
-};
-use object::{Object, ObjectSection};
-use polkavm::{ArcBytes, Module, ProgramBlob, RawInstance};
-use serde_json::{to_value, Value};
-use std::path::{Path, PathBuf};
-use std::{borrow, error, io::{Error, ErrorKind}, net::SocketAddr, path};
-use tokio::io::AsyncSeekExt;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpSocket},
-};
+use polkavm::RawInstance;
+use serde::Serialize;
 
 #[derive(Debug, Clone)]
 pub struct SandboxRpc {
-    host: String,
-    port: String,
-    max_connections: u8,
-    buf_capacity: usize,
+    base_url: String,
+    http: reqwest::Client,
+    rt: std::sync::Arc<tokio::runtime::Runtime>,
+}
+
+#[derive(Debug, Serialize)]
+struct LogRequest {
+    message: String,
 }
 
 impl Default for SandboxRpc {
@@ -26,106 +18,71 @@ impl Default for SandboxRpc {
         if let Err(e) = simple_logger::init_with_level(log::Level::Debug) {
             log::warn!("Logger error: {e}");
         };
-        SandboxRpc {
-            host: String::from("127.0.0.1"),
-            port: String::from("9229"),
-            max_connections: 5,
-            buf_capacity: 1024,
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        Self {
+            base_url: "http://localhost:9229".to_string(),
+            http: reqwest::Client::new(),
+            rt: std::sync::Arc::new(rt),
         }
     }
 }
 
 impl SandboxRpc {
-    pub(crate) fn url(&self) -> Result<SocketAddr, Error> {
-        let url = format!("{}:{}", self.host, self.port);
-        url.parse::<SocketAddr>()
-            .map_err(|_| Error::new(ErrorKind::InvalidInput, "invalid addr"))
+    fn log_url(&self) -> String {
+        format!("{}/log", self.base_url)
     }
 
-    pub(crate) fn socket(&self) -> Result<TcpSocket, Error> {
-        let socket = TcpSocket::new_v4()?;
-        socket.set_keepalive(false)?;
-        socket.set_reuseaddr(true)?;
-        socket.set_reuseport(true)?;
-        socket.bind(self.url()?)?;
-        Ok(socket)
-    }
+    fn send_log_async(&self, message: String) {
+        let http = self.http.clone();
+        let url = self.log_url();
+        let rt = self.rt.clone();
 
-    pub(crate) fn listener(&self) -> Result<TcpListener, Error> {
-        let socket = self.socket()?;
-        let listener = socket.listen(self.max_connections as u32)?;
-        Ok(listener)
-    }
+        let body = serde_json::to_string(&LogRequest { message }).unwrap();
 
-    pub async fn serve(&self) -> Result<(), std::io::Error> {
-        let listener = self.listener()?;
-        loop {
-            let (mut stream, addr) = listener.accept().await?;
-            log::info!("Incoming from client: {addr}");
-            let buf_capacity = self.buf_capacity;
-            tokio::spawn(async move {
-                let mut buf = vec![0u8; buf_capacity];
-                loop {
-                    match stream.read(&mut buf).await {
-                        Ok(n) if n > 0 => {
-                            let request = std::str::from_utf8(&buf[..n])
-                                .map(|s| s.trim_end())
-                                .unwrap_or("");
-                            log::debug!("Incoming request string: {request}");
-                            let response = dispatch_request(request).await;
-                            let response = format!("{}\n", response.to_string());
-                            if let Err(e) = stream.write_all(response.as_bytes()).await {
-                                log::error!("Write error: {e}");
-                            }
-                        }
-                        Ok(_) => {
-                            log::warn!("Closed");
-                            break;
-                        }
-                        Err(e) => log::error!("Read error: {e}"),
-                    }
-                }
-            });
-        }
-    }
-
-    pub fn serve_async(&self) -> Result<(), std::io::Error> {
-        let this = self.clone();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        log::info!("[Rpc Sandbox starting]");
         rt.spawn(async move {
-            if let Err(e) = this.serve().await {
-                log::error!("Serve failed: {e}");
+            match http
+                .post(url)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    log::debug!("[send_log_async] status = {}", resp.status());
+                }
+                Err(e) => {
+                    log::error!("[send_log_async] request error: {e}");
+                }
             }
         });
-
-        Ok(())
     }
 
     pub fn step(&self, instance: &RawInstance) {
-        let p: PathBuf = "contract.pvm".into();
         log::debug!("[Sandbox Rpc] Step");
         let pc = instance
             .program_counter()
             .expect("[Sandbox Rpc] PC not found");
+
         log::info!("[Sandbox Rpc] [PC: {}]", pc);
         println!("[Sandbox Rpc] [PC: {}]", pc);
+
+        self.send_log_async(format!("[Sandbox Rpc] [PC: {}]", pc));
     }
 }
 
-pub(crate) async fn dispatch_request(request: &str) -> Value {
-    let request_value = serde_json::from_str::<JsonRpcRequest>(request);
-    let response = match request_value {
-        Ok(req) => {
-            log::info!("Resuest: {:#?}", req);
-            to_value(methods::handle(req))
-        }
-        Err(_) => to_value(JsonRpcError {
-            code: 400,
-            message: "Request error. Bad request.".to_string(),
-            data: None,
-        }),
-    };
-    response.unwrap()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_send_log_async() {
+        let rpc = SandboxRpc::default();
+        rpc.send_log_async("Test log message".into());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
 }
